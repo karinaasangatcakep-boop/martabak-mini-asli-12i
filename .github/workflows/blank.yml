@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Martabak Mini(e) Mine - Final Jreng</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #ffe4e6; /* Soft pink background */
+        }
+        /* Custom vibrant colors */
+        .vibrant-primary { background-color: #F05D5E; } /* Energetic Pink/Red */
+        .vibrant-accent { background-color: #FFC300; } /* Bright Yellow/Amber */
+        .card-shadow { box-shadow: 0 4px 12px rgba(240, 93, 94, 0.25); }
+        
+        .chat-container {
+            max-height: 200px;
+            overflow-y: auto;
+            scrollbar-width: thin;
+        }
+        
+        /* Custom button styling */
+        .btn-primary {
+            background-color: #10B981; /* Emerald Green */
+            transition: transform 0.1s ease;
+        }
+        .btn-primary:active { transform: scale(0.95); }
+        .btn-accent {
+            background-color: #FFC300;
+            color: #374151;
+            font-weight: 700;
+            transition: transform 0.1s ease;
+        }
+        .btn-accent:active { transform: scale(0.95); }
+        
+        /* Animation */
+        @keyframes popIn {
+            0% { transform: scale(0.9); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        .animate-pop { animation: popIn 0.3s ease-out; }
+    </style>
+</head>
+<body>
+    <div id="app" class="min-h-screen flex flex-col items-center p-2 sm:p-4">
+        <!-- Header -->
+        <header class="w-full max-w-2xl p-3 vibrant-primary rounded-xl card-shadow mb-3">
+            <h1 class="text-2xl sm:text-3xl font-extrabold text-white text-center drop-shadow-md flex items-center justify-center">
+                <span data-lucide="candy" class="w-6 h-6 mr-2 text-yellow-300"></span>
+                Martabak Mini(e) Mine
+                <span data-lucide="heart-handshake" class="w-6 h-6 ml-2 text-yellow-300"></span>
+            </h1>
+            <p class="text-center text-yellow-100 mt-1 font-semibold text-xs sm:text-sm">Si Manis Ngejreng yang Bikin Happy! 🥳</p>
+        </header>
+
+        <!-- Main Content Area -->
+        <main id="main-content" class="w-full max-w-2xl flex-grow"></main>
+
+        <!-- Modals -->
+        <div id="modal-container" class="fixed inset-0 bg-black bg-opacity-60 hidden items-center justify-center z-50 p-4">
+            <div id="modal-content" class="bg-white p-5 rounded-xl card-shadow w-full max-w-sm transition-transform transform scale-100 relative">
+                <button onclick="closeModal()" class="absolute top-2 right-2 text-gray-400 hover:text-gray-600">
+                    <span data-lucide="x" class="w-6 h-6"></span>
+                </button>
+                <div id="modal-body"></div>
+                <div class="mt-4 flex justify-end">
+                    <button onclick="closeModal()" class="bg-gray-200 text-gray-800 px-4 py-2 rounded-lg font-bold">Tutup</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Firebase and Logic -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, addDoc, updateDoc, onSnapshot, collection, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // --- GLOBAL VARIABLES ---
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'martabak-default';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null; 
+        
+        let app, db, auth, userId = null;
+        let isAppReady = false;
+
+        let state = {
+            view: 'home',
+            cart: [],
+            buyerForm: { name: '', address: '', phone: '', paymentMethod: 'Dana', deliveryType: 'Delivery' },
+            orders: [],
+            reviews: [], 
+            chatHistory: [{role: 'model', text: 'Halo! Aku bot Martabak. Bingung mau pilih apa? Tanya aku ya! 🤖'}],
+            isLoading: false,
+        };
+
+        const MENU_ITEMS = [
+            { 
+                id: 1, 
+                name: 'Martabak Mini Coklat', 
+                price: 5000, 
+                desc: 'Coklat lumer parah! 🍫', 
+                img: 'https://allofresh.id/blog/wp-content/uploads/2023/08/cara-membuat-martabak-mini-2-768x512.jpg',
+            },
+            { 
+                id: 2, 
+                name: 'Martabak Mini Keju', 
+                price: 5000, 
+                desc: 'Keju segunung! 🧀', 
+                img: 'https://manfaatcara.com/wp-content/uploads/2020/03/af.jpg',
+            },
+            { 
+                id: 3, 
+                name: 'Martabak Mini Mix', 
+                price: 5000, 
+                desc: 'Mix Coklat & Keju terbaik! 🌈', 
+                img: 'https://cdn1.katadata.co.id/media/images/thumb/2022/08/30/Martabak_Mini-2022_08_30-12_03_37_499de4ba50697d484d8e4de59a32c3bb_960x640_thumb.jpg',
+            }
+        ];
+
+        const PAYMENT_OPTIONS = [
+            { value: 'Dana', label: 'Dana', detail: 'a/n Karina (085811457426)' },
+            { value: 'GOPAY', label: 'GoPay', detail: 'a/n Subqi (082280354522)' },
+            { value: 'ShopeePay', label: 'ShopeePay', detail: 'a/n Ukhti (083861562544)' },
+            { value: 'COD', label: 'COD', detail: 'Bayar tunai saat sampai.' },
+        ];
+
+        // --- INIT APP ---
+        async function initApp() {
+            if (!firebaseConfig) {
+                // Fallback for no config (UI Demo Mode)
+                isAppReady = true;
+                render();
+                return;
+            }
+            try {
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                
+                if (initialAuthToken) { 
+                    signInWithCustomToken(auth, initialAuthToken).catch(e => console.error("Custom token failed", e));
+                } else { 
+                    signInAnonymously(auth).catch(e => console.error("Anon sign-in failed", e));
+                }
+                
+                onAuthStateChanged(auth, (user) => {
+                    userId = user ? user.uid : 'anon';
+                    isAppReady = true;
+                    console.log("Auth Ready:", userId);
+                    setupListeners(); 
+                    render(); 
+                });
+
+            } catch (e) { 
+                console.error("Init Error:", e);
+                isAppReady = true; // Force UI to show even if firebase fails
+                alertModal('System Error', 'Database tidak terhubung. Mode offline.');
+                render(); 
+            }
+        }
+
+        // --- FIRESTORE LISTENERS ---
+        function setupListeners() {
+            if (!db || !isAppReady) return;
+            
+            // Reviews
+            const reviewPath = `artifacts/${appId}/public/data/mini_martabak_reviews`;
+            onSnapshot(collection(db, reviewPath), (snap) => {
+                let r = []; snap.forEach(d => r.push({id: d.id, ...d.data()}));
+                state.reviews = r.sort((a,b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
+                if (state.view === 'buyer') render(); 
+            }, err => console.log("Rev err", err));
+
+            // Orders
+            const orderPath = `artifacts/${appId}/public/data/mini_martabak_orders`;
+            onSnapshot(collection(db, orderPath), (snap) => {
+                let o = []; snap.forEach(d => o.push({id: d.id, ...d.data()}));
+                state.orders = o.sort((a,b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
+                if (state.view === 'seller_dashboard') render();
+            }, err => console.log("Ord err", err));
+        }
+
+        // --- CORE LOGIC ---
+        window.setView = (v) => {
+            state.view = v;
+            if (v === 'buyer') {
+                state.cart = [];
+                state.buyerForm = { name: '', address: '', phone: '', paymentMethod: 'Dana', deliveryType: 'Delivery' };
+            }
+            render();
+        };
+
+        window.addToCart = (itemId) => {
+            const item = MENU_ITEMS.find(i => i.id === itemId);
+            const ex = state.cart.find(i => i.id === itemId);
+            if (ex) ex.quantity++; else state.cart.push({...item, quantity: 1});
+            render();
+        };
+
+        window.updateQuantity = (id, chg) => {
+            const item = state.cart.find(i => i.id === id);
+            if (item) {
+                item.quantity += chg;
+                if (item.quantity <= 0) state.cart = state.cart.filter(i => i.id !== id);
+            }
+            render();
+        };
+
+        window.updateForm = (field, val) => { state.buyerForm[field] = val; };
+
+        function calculateTotal() { return state.cart.reduce((t, i) => t + (i.price * i.quantity), 0); }
+
+        window.handleSellerLogin = () => {
+            const pwd = document.getElementById('seller-pwd').value;
+            if (pwd === "usahabertiga") setView('seller_dashboard');
+            else alertModal('Akses Ditolak', 'Password salah! Coba tanya bos.');
+        };
+
+        window.handlePlaceOrder = async () => {
+            if (!db || !isAppReady || !userId) return alertModal('Error', 'Sistem belum siap.');
+            if (!state.buyerForm.name || !state.buyerForm.address) return alertModal('Data Kurang', 'Nama dan Alamat wajib diisi!');
+            
+            const total = calculateTotal();
+            if (total === 0) return alertModal('Kosong', 'Beli sesuatu dong!');
+
+            state.isLoading = true; render();
+            
+            try {
+                const pay = PAYMENT_OPTIONS.find(p => p.value === state.buyerForm.paymentMethod);
+                const orderData = {
+                    ...state.buyerForm,
+                    paymentDetail: pay ? `${pay.label}: ${pay.detail}` : 'Unknown',
+                    items: state.cart.map(i => ({ name: i.name, qty: i.quantity, price: i.price })),
+                    total: total,
+                    status: 'Baru',
+                    timestamp: serverTimestamp(),
+                    appId, userId
+                };
+
+                await addDoc(collection(db, `artifacts/${appId}/public/data/mini_martabak_orders`), orderData);
+                alertModal('Berhasil!', `Pesananmu Rp ${total.toLocaleString('id-ID')} diterima! Tunggu ya!`);
+                state.cart = []; setView('home'); 
+            } catch(e) {
+                console.error(e);
+                alertModal('Gagal', 'Gagal membuat pesanan. Coba lagi.');
+            }
+            state.isLoading = false; render();
+        };
+
+        window.handleCompleteOrder = async (oid) => {
+            if (!db) return;
+            try {
+                await updateDoc(doc(db, `artifacts/${appId}/public/data/mini_martabak_orders`, oid), {
+                    status: 'Selesai', completedAt: serverTimestamp()
+                });
+                alertModal('Mantap', 'Pesanan selesai!');
+            } catch(e) { alertModal('Error', e.message); }
+        };
+
+        window.handleReviewSubmit = async () => {
+            if (!db) return;
+            const txt = document.getElementById('rev-txt').value.trim();
+            const nm = document.getElementById('rev-nm').value.trim() || 'Anonim';
+            if(!txt) return;
+            
+            try {
+                await addDoc(collection(db, `artifacts/${appId}/public/data/mini_martabak_reviews`), {
+                    text: txt, name: nm, timestamp: serverTimestamp(), appId, userId
+                });
+                alertModal('Thanks!', 'Ulasanmu sudah tayang!');
+                render();
+            } catch(e) { alertModal('Error', e.message); }
+        };
+
+        window.handleChatbot = async () => {
+            const inp = document.getElementById('chat-in');
+            const q = inp.value.trim();
+            if (!q) return;
+            inp.value = '';
+            
+            state.chatHistory.push({role:'user', text:q});
+            state.isLoading = true; render();
+            
+            try {
+                const apiKey = ""; // Runtime key
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+                const payload = {
+                    contents: [{parts:[{text:`User bertanya: "${q}". Kamu adalah bot Martabak Mini yang lucu dan asik. Jawab singkat (max 2 kalimat) dan beri rekomendasi menu martabak mini (coklat/keju/mix). Pakai emoji!`}]}]
+                };
+                
+                const res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+                const d = await res.json();
+                const reply = d.candidates?.[0]?.content?.parts?.[0]?.text || "Maaf, bot lagi ngantuk. 😴";
+                state.chatHistory.push({role:'model', text: reply});
+            } catch(e) {
+                state.chatHistory.push({role:'model', text:"Bot error..."});
+            }
+            state.isLoading = false; render();
+        };
+
+        // --- UTILS ---
+        window.alertModal = (title, msg) => {
+            const body = document.getElementById('modal-body');
+            body.innerHTML = `<h3 class="text-xl font-bold mb-2 text-vibrant-primary">${title}</h3><p class="text-gray-700">${msg}</p>`;
+            document.getElementById('modal-container').classList.remove('hidden');
+            document.getElementById('modal-container').classList.add('flex');
+        };
+
+        window.closeModal = () => {
+            document.getElementById('modal-container').classList.add('hidden');
+            document.getElementById('modal-container').classList.remove('flex');
+        };
+
+        // --- RENDER ---
+        function render() {
+            const root = document.getElementById('main-content');
+            if (!root) return;
+            
+            if (!isAppReady) {
+                root.innerHTML = `<div class="text-center mt-10"><span data-lucide="loader-2" class="animate-spin w-8 h-8 text-vibrant-primary mx-auto"></span><p class="mt-2 text-gray-500">Menyiapkan Dapur...</p></div>`;
+                lucide.createIcons();
+                return;
+            }
+
+            let html = '';
+
+            // --- VIEW: HOME ---
+            if (state.view === 'home') {
+                html = `
+                    <div class="flex flex-col items-center pt-8 animate-pop">
+                        <div class="bg-white p-6 rounded-2xl shadow-xl w-full max-w-sm border-t-4 border-vibrant-primary">
+                            <h2 class="text-2xl font-bold mb-6 text-center text-gray-800">Mau Ngapain?</h2>
+                            <button onclick="setView('buyer')" class="w-full btn-primary text-white font-bold py-4 px-4 rounded-xl shadow-md mb-4 flex items-center justify-center text-lg">
+                                <span data-lucide="shopping-bag" class="mr-3"></span> BELI JAJANAN
+                            </button>
+                            <button onclick="setView('seller_login')" class="w-full bg-gray-100 text-gray-600 font-bold py-3 px-4 rounded-xl hover:bg-gray-200 flex items-center justify-center">
+                                <span data-lucide="lock" class="mr-2 w-4 h-4"></span> Masuk Admin
+                            </button>
+                        </div>
+                        <div class="mt-8 text-center text-xs text-gray-500">
+                            ID Sesi: ${userId ? userId.slice(0,5)+'...' : 'Menunggu Auth...'}
+                        </div>
+                    </div>
+                `;
+            }
+
+            // --- VIEW: SELLER LOGIN ---
+            else if (state.view === 'seller_login') {
+                html = `
+                    <div class="bg-white p-6 rounded-2xl shadow-lg animate-pop">
+                        <h2 class="text-xl font-bold mb-4 flex items-center"><span data-lucide="lock" class="mr-2 text-vibrant-primary"></span>Login Penjual</h2>
+                        <input type="password" id="seller-pwd" placeholder="Password Rahasia" class="w-full p-3 border rounded-lg mb-4 focus:ring-2 focus:ring-yellow-400 outline-none">
+                        <div class="flex gap-2">
+                            <button onclick="handleSellerLogin()" class="flex-1 btn-primary text-white font-bold py-2 rounded-lg">Masuk</button>
+                            <button onclick="setView('home')" class="px-4 py-2 bg-gray-200 rounded-lg text-gray-600">Batal</button>
+                        </div>
+                    </div>
+                `;
+            }
+
+            // --- VIEW: SELLER DASHBOARD ---
+            else if (state.view === 'seller_dashboard') {
+                const activeOrders = state.orders.filter(o => o.status === 'Baru');
+                const historyOrders = state.orders.filter(o => o.status === 'Selesai');
+                
+                const renderOrder = (o, isHistory) => `
+                    <div class="bg-white p-4 rounded-xl shadow-sm border-l-4 ${isHistory ? 'border-gray-300 opacity-75' : 'border-green-500'} mb-3">
+                        <div class="flex justify-between items-start mb-2">
+                            <div>
+                                <h4 class="font-bold text-gray-800">${o.name}</h4>
+                                <p class="text-xs text-gray-500">${o.address}</p>
+                            </div>
+                            <span class="text-xs font-mono bg-gray-100 px-2 py-1 rounded">${o.paymentMethod}</span>
+                        </div>
+                        <div class="bg-yellow-50 p-2 rounded text-sm mb-2">
+                            ${o.items.map(i => `<div class="flex justify-between"><span>${i.qty}x ${i.name}</span><span>${(i.price*i.qty).toLocaleString()}</span></div>`).join('')}
+                            <div class="border-t border-yellow-200 mt-1 pt-1 font-bold flex justify-between">
+                                <span>Total</span><span>Rp ${o.total.toLocaleString()}</span>
+                            </div>
+                        </div>
+                        ${!isHistory ? `<button onclick="handleCompleteOrder('${o.id}')" class="w-full bg-blue-500 text-white py-2 rounded-lg font-bold text-sm hover:bg-blue-600">✅ Tandai Selesai</button>` : `<div class="text-center text-xs text-green-600 font-bold">Selesai</div>`}
+                    </div>
+                `;
+
+                html = `
+                    <div class="animate-pop">
+                        <div class="flex items-center justify-between mb-4">
+                            <h2 class="text-xl font-bold">Dapur Pesanan (${activeOrders.length})</h2>
+                            <button onclick="setView('home')" class="bg-gray-200 p-2 rounded-full"><span data-lucide="log-out" class="w-5 h-5"></span></button>
+                        </div>
+                        
+                        <div class="space-y-4 mb-8">
+                            ${activeOrders.length === 0 ? '<p class="text-center text-gray-400 italic py-4">Belum ada pesanan baru.</p>' : activeOrders.map(o => renderOrder(o, false)).join('')}
+                        </div>
+
+                        <h3 class="text-lg font-bold mb-2 text-gray-500">Riwayat Pesanan</h3>
+                        <div class="space-y-2">
+                            ${historyOrders.map(o => renderOrder(o, true)).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+
+            // --- VIEW: BUYER ---
+            else if (state.view === 'buyer') {
+                const total = calculateTotal();
+                
+                // Chat Component
+                const chatHTML = `
+                    <div class="bg-white rounded-xl shadow-sm mb-4 p-3 border border-pink-100">
+                        <div class="flex items-center gap-2 mb-2 text-vibrant-primary font-bold text-sm">
+                            <span data-lucide="bot" class="w-4 h-4"></span> Tanya Si Mini
+                        </div>
+                        <div class="chat-container bg-gray-50 rounded-lg p-2 mb-2 text-sm space-y-2">
+                            ${state.chatHistory.map(c => 
+                                `<div class="${c.role === 'user' ? 'text-right' : 'text-left'}">
+                                    <span class="inline-block px-3 py-1.5 rounded-lg ${c.role === 'user' ? 'bg-pink-200 text-pink-900' : 'bg-white border text-gray-700 shadow-sm'}">
+                                        ${c.text}
+                                    </span>
+                                </div>`
+                            ).join('')}
+                            ${state.isLoading ? '<div class="text-center text-xs text-gray-400 animate-pulse">Mengetik...</div>' : ''}
+                        </div>
+                        <div class="flex gap-2">
+                            <input type="text" id="chat-in" class="flex-1 border rounded-lg px-2 py-1 text-sm outline-none focus:border-pink-400" placeholder="Tanya rekomendasi...">
+                            <button onclick="handleChatbot()" class="bg-pink-500 text-white p-1.5 rounded-lg"><span data-lucide="send" class="w-4 h-4"></span></button>
+                        </div>
+                    </div>
+                `;
+
+                // Products
+                const productsHTML = `
+                    <div class="grid grid-cols-1 gap-4 mb-6">
+                        ${MENU_ITEMS.map(item => `
+                            <div class="bg-white p-3 rounded-xl shadow flex gap-3 items-center">
+                                <img src="${item.img}" class="w-20 h-20 rounded-lg object-cover bg-gray-200" alt="${item.name}">
+                                <div class="flex-1">
+                                    <h3 class="font-bold text-gray-800">${item.name}</h3>
+                                    <p class="text-xs text-gray-500 mb-2">${item.desc}</p>
+                                    <div class="flex justify-between items-center">
+                                        <span class="font-bold text-vibrant-primary">Rp ${item.price.toLocaleString()}</span>
+                                        <button onclick="addToCart(${item.id})" class="btn-accent px-3 py-1 rounded-lg text-sm shadow-sm flex items-center">
+                                            <span data-lucide="plus" class="w-3 h-3 mr-1"></span> Add
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+
+                // Cart & Form
+                const cartHTML = state.cart.length > 0 ? `
+                    <div class="bg-white p-4 rounded-xl shadow-lg border-2 border-yellow-300 mb-6">
+                        <h3 class="font-bold text-lg mb-3 flex items-center"><span data-lucide="shopping-cart" class="mr-2 w-5 h-5"></span> Keranjang</h3>
+                        <div class="space-y-2 mb-4">
+                            ${state.cart.map(i => `
+                                <div class="flex justify-between items-center bg-gray-50 p-2 rounded">
+                                    <span class="text-sm font-medium flex-1">${i.name}</span>
+                                    <div class="flex items-center gap-2">
+                                        <button onclick="updateQuantity(${i.id}, -1)" class="w-6 h-6 bg-red-100 text-red-600 rounded flex items-center justify-center font-bold">-</button>
+                                        <span class="text-sm w-4 text-center">${i.quantity}</span>
+                                        <button onclick="updateQuantity(${i.id}, 1)" class="w-6 h-6 bg-green-100 text-green-600 rounded flex items-center justify-center font-bold">+</button>
+                                    </div>
+                                    <span class="text-sm font-bold w-16 text-right">${(i.price*i.quantity).toLocaleString()}</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                        <div class="flex justify-between font-bold text-lg mb-4 border-t pt-2">
+                            <span>Total</span>
+                            <span class="text-vibrant-primary">Rp ${total.toLocaleString()}</span>
+                        </div>
+                        
+                        <!-- Form Inputs -->
+                        <div class="space-y-3 mb-4">
+                            <input type="text" placeholder="Nama Kamu" value="${state.buyerForm.name}" onchange="updateForm('name', this.value)" class="w-full p-2 border rounded-lg text-sm">
+                            <textarea placeholder="Alamat Lengkap (Kelas/Asrama)" onchange="updateForm('address', this.value)" class="w-full p-2 border rounded-lg text-sm h-20">${state.buyerForm.address}</textarea>
+                            <select onchange="updateForm('paymentMethod', this.value)" class="w-full p-2 border rounded-lg text-sm bg-white">
+                                ${PAYMENT_OPTIONS.map(p => `<option value="${p.value}" ${state.buyerForm.paymentMethod===p.value?'selected':''}>${p.label}</option>`).join('')}
+                            </select>
+                        </div>
+
+                        <button onclick="handlePlaceOrder()" ${state.isLoading?'disabled':''} class="w-full btn-primary text-white font-bold py-3 rounded-xl shadow-lg flex justify-center items-center gap-2 disabled:opacity-50">
+                            ${state.isLoading ? '<span data-lucide="loader-2" class="animate-spin"></span> Memproses...' : '<span data-lucide="check-circle"></span> PESAN SEKARANG'}
+                        </button>
+                    </div>
+                ` : `
+                    <div class="bg-white p-4 rounded-xl shadow mb-6 text-center text-gray-400 py-8 border-dashed border-2 border-gray-200">
+                        <span data-lucide="shopping-basket" class="w-10 h-10 mx-auto mb-2 opacity-50"></span>
+                        <p>Keranjang masih kosong nih.</p>
+                    </div>
+                `;
+
+                // Reviews List
+                const reviewsHTML = `
+                    <div class="mt-8">
+                        <h3 class="font-bold text-lg mb-3 flex items-center"><span data-lucide="star" class="mr-2 text-yellow-500"></span> Apa Kata Mereka?</h3>
+                        <div class="flex gap-2 mb-4">
+                            <input id="rev-nm" placeholder="Nama" class="w-1/3 border rounded px-2 py-1 text-sm">
+                            <input id="rev-txt" placeholder="Tulis review..." class="flex-1 border rounded px-2 py-1 text-sm">
+                            <button onclick="handleReviewSubmit()" class="bg-blue-500 text-white rounded px-3"><span data-lucide="send" class="w-4 h-4"></span></button>
+                        </div>
+                        <div class="space-y-3 max-h-60 overflow-y-auto">
+                            ${state.reviews.length === 0 ? '<p class="text-sm text-gray-400 italic">Belum ada review. Jadilah yang pertama!</p>' : 
+                              state.reviews.map(r => `
+                                <div class="bg-white p-3 rounded-lg shadow-sm border-b border-gray-100">
+                                    <div class="flex justify-between items-center mb-1">
+                                        <span class="font-bold text-xs text-vibrant-primary">${r.name}</span>
+                                        <span class="text-[10px] text-gray-400">${r.timestamp ? new Date(r.timestamp.seconds*1000).toLocaleDateString() : 'Baru saja'}</span>
+                                    </div>
+                                    <p class="text-sm text-gray-700">"${r.text}"</p>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+
+                html = `
+                    <div class="animate-pop">
+                        <button onclick="setView('home')" class="mb-4 flex items-center text-gray-500 hover:text-gray-800 font-bold text-sm">
+                            <span data-lucide="arrow-left" class="mr-1 w-4 h-4"></span> Kembali
+                        </button>
+                        ${chatHTML}
+                        ${productsHTML}
+                        ${cartHTML}
+                        ${reviewsHTML}
+                    </div>
+                `;
+            }
+
+            root.innerHTML = html;
+            lucide.createIcons();
+        }
+
+        // Start
+        initApp();
+    </script>
+</body>
+</html>
